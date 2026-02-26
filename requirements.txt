@@ -1,0 +1,7 @@
+yt-dlp
+sounddevice
+soundfile
+numpy
+scipy
+torch
+librosa

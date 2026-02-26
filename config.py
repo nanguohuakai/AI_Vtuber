@@ -1,0 +1,5 @@
+RVC_MODEL_PATH = "models/voice.pth"
+RVC_SCRIPT = "bin/rvc/infer.py"
+UVR_SCRIPT = "bin/uvr/inference.py"
+SONG_DIR = "songs"
+OUTPUT_DIR = "output"
