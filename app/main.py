@@ -1,6 +1,8 @@
 import asyncio
+import json
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
@@ -9,8 +11,9 @@ from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 CLAUDE_URL = "https://claude.ai/new"
 CDP_ENDPOINT = "http://127.0.0.1:9222"
+MODEL_COOKIE_PATH = Path("data/model_cookies.json")
 
-app = FastAPI(title="Claude Web OpenAI Gateway", version="0.1.0")
+app = FastAPI(title="Claude Web OpenAI Gateway", version="0.2.0")
 
 
 class ChatMessage(BaseModel):
@@ -32,6 +35,7 @@ class GatewayState:
     context: BrowserContext | None = None
     page: Page | None = None
     lock: asyncio.Lock = asyncio.Lock()
+    cookies_by_model: dict[str, list[dict[str, Any]]] = {}
 
 
 state = GatewayState()
@@ -44,8 +48,46 @@ def _build_prompt(messages: list[ChatMessage]) -> str:
     return "\n".join(merged)
 
 
-async def _ensure_page() -> Page:
-    if state.page and not state.page.is_closed():
+def _load_model_cookies() -> dict[str, list[dict[str, Any]]]:
+    if not MODEL_COOKIE_PATH.exists():
+        return {}
+
+    raw = json.loads(MODEL_COOKIE_PATH.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"{MODEL_COOKIE_PATH} 内容格式错误，应为 JSON 对象")
+
+    cookies_by_model: dict[str, list[dict[str, Any]]] = {}
+    for model, payload in raw.items():
+        if isinstance(payload, dict):
+            cookies = payload.get("cookies", [])
+        else:
+            cookies = payload
+
+        if not isinstance(model, str) or not isinstance(cookies, list):
+            continue
+        cookies_by_model[model] = cookies
+
+    return cookies_by_model
+
+
+async def _apply_model_cookies(context: BrowserContext, model: str) -> None:
+    cookies = state.cookies_by_model.get(model)
+    if cookies is None:
+        if state.cookies_by_model:
+            supported = ", ".join(sorted(state.cookies_by_model))
+            raise HTTPException(status_code=400, detail=f"不支持的 model: {model}。可用 model: {supported}")
+        return
+
+    if cookies:
+        await context.clear_cookies()
+        await context.add_cookies(cookies)
+
+
+async def _ensure_page(model: str) -> Page:
+    state.cookies_by_model = state.cookies_by_model or _load_model_cookies()
+
+    if state.page and not state.page.is_closed() and state.context:
+        await _apply_model_cookies(state.context, model)
         return state.page
 
     state.playwright = state.playwright or await async_playwright().start()
@@ -55,6 +97,8 @@ async def _ensure_page() -> Page:
         state.context = state.browser.contexts[0]
     else:
         state.context = await state.browser.new_context()
+
+    await _apply_model_cookies(state.context, model)
 
     pages = state.context.pages
     if pages:
@@ -139,7 +183,7 @@ async def chat_completions(req: ChatCompletionRequest) -> dict[str, Any]:
     prompt = _build_prompt(user_messages)
 
     async with state.lock:
-        page = await _ensure_page()
+        page = await _ensure_page(req.model)
         output = await _send_and_read(page, prompt)
 
     now = int(time.time())
