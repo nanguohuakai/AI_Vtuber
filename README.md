@@ -64,6 +64,44 @@ resp = client.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
+## 5. 导出 Chrome 登录信息（Cookie / LocalStorage）
+
+参考 `openclaw-zero-token` 的思路，本项目新增了会话导出接口，可从当前 CDP 连接的浏览器上下文中读取登录态并通过 HTTP API 对外提供。
+
+### 查询登录状态
+
+```bash
+curl 'http://127.0.0.1:8000/v1/session/status?url=https://claude.ai/new'
+```
+
+返回示例：
+
+```json
+{
+  "status": "ok",
+  "url": "https://claude.ai/new",
+  "logged_in": true,
+  "cookie_count": 6,
+  "exported_at": 1733900000
+}
+```
+
+### 导出会话详情
+
+```bash
+curl http://127.0.0.1:8000/v1/session/export \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "url": "https://claude.ai/new",
+    "include_local_storage": true
+  }'
+```
+
+返回内容包括：
+- `cookies`: 匹配目标域名的 Cookie 列表
+- `local_storage`: 页面 localStorage 键值
+- `logged_in`: 基于 Cookie 是否存在的快速状态判断
+
 ## 已知限制
 
 - 这是网页自动化方案，不是 Claude 官方 API，页面变更可能导致失效。

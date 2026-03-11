@@ -2,6 +2,7 @@ import asyncio
 import time
 import uuid
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -24,6 +25,17 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
+
+
+class SessionExportRequest(BaseModel):
+    url: str = CLAUDE_URL
+    include_local_storage: bool = True
+
+
+def _domain_matches(cookie_domain: str, host: str) -> bool:
+    normalized = cookie_domain.lstrip(".").lower()
+    host = host.lower()
+    return host == normalized or host.endswith(f".{normalized}")
 
 
 class GatewayState:
@@ -114,6 +126,41 @@ async def _send_and_read(page: Page, prompt: str) -> str:
     raise HTTPException(status_code=504, detail="等待 Claude 响应超时")
 
 
+async def _collect_session_data(url: str, include_local_storage: bool) -> dict[str, Any]:
+    page = await _ensure_page()
+    parsed = urlparse(url)
+
+    if not parsed.scheme or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="url 必须是合法的 http(s) 地址")
+
+    host = parsed.hostname or ""
+    cookies = await state.context.cookies() if state.context else []
+    matched_cookies = [c for c in cookies if _domain_matches(c.get("domain", ""), host)]
+
+    local_storage: dict[str, str] = {}
+    if include_local_storage:
+        await page.goto(url, wait_until="domcontentloaded")
+        local_storage = await page.evaluate(
+            """() => {
+                const data = {};
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    data[k] = localStorage.getItem(k);
+                }
+                return data;
+            }"""
+        )
+
+    return {
+        "url": url,
+        "cookie_count": len(matched_cookies),
+        "cookies": matched_cookies,
+        "local_storage": local_storage,
+        "logged_in": len(matched_cookies) > 0,
+        "exported_at": int(time.time()),
+    }
+
+
 @app.on_event("shutdown")
 async def _shutdown() -> None:
     if state.browser:
@@ -125,6 +172,29 @@ async def _shutdown() -> None:
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/v1/session/status")
+async def session_status(url: str = CLAUDE_URL) -> dict[str, Any]:
+    async with state.lock:
+        session = await _collect_session_data(url=url, include_local_storage=False)
+
+    return {
+        "status": "ok",
+        "url": session["url"],
+        "logged_in": session["logged_in"],
+        "cookie_count": session["cookie_count"],
+        "exported_at": session["exported_at"],
+    }
+
+
+@app.post("/v1/session/export")
+async def session_export(req: SessionExportRequest) -> dict[str, Any]:
+    async with state.lock:
+        return await _collect_session_data(
+            url=req.url,
+            include_local_storage=req.include_local_storage,
+        )
 
 
 @app.post("/v1/chat/completions")
