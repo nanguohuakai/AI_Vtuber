@@ -28,13 +28,26 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
-## 3. 启动 API 服务
+## 3. 执行 Onboard，保存 model 对应 Cookie
+
+```bash
+./scripts/onboard.sh claude-web
+```
+
+或交互式输入多个模型（例如 `claude-web,claude-3-7-sonnet`）。脚本会：
+- 连接 `http://127.0.0.1:9222`
+- 从当前调试浏览器读取 `https://claude.ai` 的 cookie
+- 写入 `data/model_cookies.json`
+
+当 `model_cookies.json` 中存在条目时，API 仅允许请求这些 model，并在请求前注入对应 cookie。
+
+## 4. 启动 API 服务
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-## 4. OpenAI 兼容调用示例
+## 5. OpenAI 兼容调用示例
 
 ### cURL
 

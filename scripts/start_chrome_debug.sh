@@ -3,6 +3,7 @@ set -euo pipefail
 
 PROFILE_DIR="$(pwd)/.chrome-profile"
 URL="https://claude.ai/new"
+PORT="${CHROME_DEBUG_PORT:-9222}"
 
 mkdir -p "$PROFILE_DIR"
 
@@ -18,7 +19,9 @@ else
 fi
 
 "$CHROME_BIN" \
-  --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port="$PORT" \
+  --remote-allow-origins='*' \
   --user-data-dir="$PROFILE_DIR" \
   --no-first-run \
   --no-default-browser-check \
